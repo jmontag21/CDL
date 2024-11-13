@@ -89,6 +89,15 @@ if uploaded_files:
                     match = re.search(r'FRT\d+(?:/\d+)?', text)
                     return match.group(0) if match else "No Freight Number Found"
                 
+                def clean_customer_po(po_number):
+                    # Remove any 'SO' suffix and trim whitespace
+                    po_number = str(po_number).replace(' SO', '').strip()
+                    # Remove any additional text or prefixes
+                    if '-' in po_number:
+                        parts = po_number.split('-')
+                        po_number = parts[-1].strip()
+                    return po_number
+                
                 def process_pdf(pdf_file, max_retries=3, retry_delay=5):
                     pdf_path = os.path.join(temp_dir, pdf_file)
                     
@@ -107,7 +116,7 @@ if uploaded_files:
                             with open(image_path, "rb") as image_file:
                                 base64_image = base64.b64encode(image_file.read()).decode('utf-8')
                     
-                            # Prepare the prompt and messages
+                            # Updated prompt with clearer instructions for CUSTOMER_PO
                             messages = [
                                 {
                                     "role": "user",
@@ -117,13 +126,14 @@ if uploaded_files:
                                             "text": (
                                                 "Please extract the following fields from the invoice image and provide the data in JSON format, using the exact field names provided, and without any code blocks or additional formatting:\n"
                                                 "- INVOICE_NUMBER (look for a 7-digit number near the top of the invoice)\n"
-                                                "- CUSTOMER_PO (look for a number following 'SO' near the top of the invoice)\n"
+                                                "- CUSTOMER_PO (look for the customer purchase order number, this is typically a 6-7 digit number in the CUSTOMER_PO column)\n"
                                                 "- EXTENDED_AMOUNT (look for the subtotal before freight and taxes)\n"
                                                 "- MISC_CHARGES (if present, otherwise return '0.00')\n"
                                                 "- FRT_HANDLING (look for a value next to 'FRT' or 'Freight')\n"
                                                 "- SALES_TAX (if present, otherwise return '0.00')\n"
                                                 "- AMOUNT_DUE (look for the final total amount)\n"
                                                 "- FREIGHT (look for a string starting with 'FRT' followed by numbers, e.g., 'FRT40/731927948270')\n"
+                                                "\nNote: For CUSTOMER_PO, return only the number without any 'SO' suffix or additional text.\n"
                                                 "\nPlease include the full text content of the invoice in your response as well."
                                             )
                                         },
@@ -159,6 +169,10 @@ if uploaded_files:
                                 
                                 # Normalize field names
                                 extracted_data = normalize_field_names(extracted_data)
+                                
+                                # Clean up the CUSTOMER_PO field
+                                if 'CUSTOMER_PO' in extracted_data:
+                                    extracted_data['CUSTOMER_PO'] = clean_customer_po(extracted_data['CUSTOMER_PO'])
                                 
                                 # Extract freight number from the full text content
                                 extracted_data['FREIGHT'] = extract_freight(response_text)
@@ -221,9 +235,6 @@ if uploaded_files:
                     # Reorder the columns if needed
                     columns_order = ['INVOICE_NUMBER', 'CUSTOMER_PO', 'EXTENDED_AMOUNT', 'MISC_CHARGES', 'FRT_HANDLING', 'SALES_TAX', 'AMOUNT_DUE', 'FREIGHT', 'pdf_file']
                     df = df.reindex(columns=columns_order)
-                    
-                    # Save the DataFrame to a CSV file in memory
-                    csv_buffer = df.to_csv(index=False).encode('utf-8')
                     
                     # Store the processed data in session state
                     st.session_state.data = data
